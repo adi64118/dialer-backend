@@ -72,3 +72,7 @@ def get_progress(user_id: int):
         raise HTTPException(status_code=404, detail="User not found")
 
     return {"progress": r.json()[0].get("progress", 0)}
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
