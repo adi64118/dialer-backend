@@ -1,3 +1,4 @@
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import os
@@ -14,6 +15,13 @@ HEADERS = {
 }
 
 app = FastAPI(title="Dialer Backend")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # sabko allow
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ---------- MODELS ----------
 class LoginData(BaseModel):
