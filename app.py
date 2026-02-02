@@ -11,7 +11,8 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 HEADERS = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
-    "Content-Type": "application/json"
+    "Content-Type": "application/json",
+    "Accept": "application/json"
 }
 
 app = FastAPI(title="Dialer Backend")
