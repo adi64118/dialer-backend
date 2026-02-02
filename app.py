@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
 import requests
@@ -8,16 +9,24 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
-    raise RuntimeError("SUPABASE_URL or SUPABASE_KEY missing")
+    raise RuntimeError("SUPABASE_URL or SUPABASE_KEY not set")
 
 HEADERS = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
-    "Content-Type": "application/json",
-    "Accept": "application/json"
+    "Content-Type": "application/json"
 }
 
 app = FastAPI(title="Dialer Backend")
+
+# ---------- CORS FIX ----------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],   # allow all
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ---------- MODELS ----------
 class LoginData(BaseModel):
@@ -33,33 +42,30 @@ class ProgressData(BaseModel):
 def root():
     return {"status": "server running"}
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
 @app.post("/login")
 def login(data: LoginData):
-    # 🔹 Step 1: only fetch by username
-    url = f"{SUPABASE_URL}/rest/v1/users?username=eq.{data.username}"
+    print("LOGIN REQUEST:", data.username)
+
+    url = f"{SUPABASE_URL}/rest/v1/users?username=eq.{data.username}&password=eq.{data.password}"
     r = requests.get(url, headers=HEADERS)
 
-    if r.status_code != 200:
-        raise HTTPException(status_code=500, detail="Supabase error")
+    print("SUPABASE STATUS:", r.status_code)
+    print("SUPABASE RESPONSE:", r.text)
 
-    users = r.json()
-    if not users:
+    if r.status_code != 200 or not r.json():
         raise HTTPException(status_code=401, detail="Invalid login")
 
-    user = users[0]
+    user = r.json()[0]
 
-    # 🔹 Step 2: check password manually
-    if user["password"] != data.password:
-        raise HTTPException(status_code=401, detail="Invalid login")
-
-    # 🔹 Step 3: banned check
-    if user.get("banned") is True:
+    if user.get("banned"):
         raise HTTPException(status_code=403, detail="User banned")
 
-    # 🔹 Step 4: expiry check
-    if user.get("expiry"):
-        if date.fromisoformat(user["expiry"]) < date.today():
-            raise HTTPException(status_code=403, detail="Account expired")
+    if user.get("expiry") and date.fromisoformat(user["expiry"]) < date.today():
+        raise HTTPException(status_code=403, detail="Account expired")
 
     return {
         "status": "success",
@@ -72,6 +78,7 @@ def login(data: LoginData):
 def save_progress(data: ProgressData):
     url = f"{SUPABASE_URL}/rest/v1/users?id=eq.{data.user_id}"
     payload = {"progress": data.progress}
+
     r = requests.patch(url, headers=HEADERS, json=payload)
 
     if r.status_code not in (200, 204):
