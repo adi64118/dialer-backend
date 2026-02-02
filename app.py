@@ -99,3 +99,42 @@ def get_progress(user_id: int):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+
+GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
+
+scope = ["https://spreadsheets.google.com/feeds","https://www.googleapis.com/auth/drive"]
+creds = ServiceAccountCredentials.from_json_keyfile_name("google.json", scope)
+client = gspread.authorize(creds)
+sheet = client.open_by_key(GOOGLE_SHEET_ID).sheet1
+
+@app.get("/next")
+def get_next(user_id: int):
+    url = f"{SUPABASE_URL}/rest/v1/users?id=eq.{user_id}"
+    r = requests.get(url, headers=HEADERS)
+    user = r.json()[0]
+
+    index = user.get("progress", 0)
+    rows = sheet.get_all_values()
+
+    if index + 1 >= len(rows):
+        return {"done": True}
+
+    row = rows[index + 1]
+    return {
+        "index": index,
+        "name": row[0],
+        "phone": row[1]
+    }
+
+@app.post("/save")
+def save_and_next(user_id: int, remark: str):
+    url = f"{SUPABASE_URL}/rest/v1/users?id=eq.{user_id}"
+    requests.patch(url, headers=HEADERS, json={"progress": user_id+1})
+
+    rows = sheet.get_all_values()
+    sheet.update_cell(user_id+2, 3, remark)
+
+    return {"status": "saved"}
