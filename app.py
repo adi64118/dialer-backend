@@ -5,17 +5,11 @@ from datetime import date
 from google.oauth2.service_account import Credentials
 import gspread
 
-# ================== ENV ==================
+# ----------------- ENV -----------------
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
 SHEET_ID = os.getenv("SHEET_ID")
-
-if not SUPABASE_URL or not SUPABASE_KEY:
-    raise RuntimeError("SUPABASE env not set")
-
-if not GOOGLE_CREDENTIALS or not SHEET_ID:
-    raise RuntimeError("GOOGLE env not set")
+GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS")
 
 HEADERS = {
     "apikey": SUPABASE_KEY,
@@ -23,16 +17,14 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# ================== GOOGLE SHEET ==================
-google_creds = json.loads(GOOGLE_CREDENTIALS)
-scope = ["https://www.googleapis.com/auth/spreadsheets"]
-creds = Credentials.from_service_account_info(google_creds, scopes=scope)
-gc = gspread.authorize(creds)
-sheet = gc.open_by_key(SHEET_ID).sheet1
-
-# ================== FASTAPI ==================
+# ----------------- APP -----------------
 app = FastAPI(title="Dialer Backend")
 
+# ----------------- GOOGLE SHEET -----------------
+gc = gspread.service_account_from_dict(json.loads(GOOGLE_CREDENTIALS_JSON))
+sheet = gc.open_by_key(SHEET_ID).sheet1  # first sheet
+
+# ----------------- MODELS -----------------
 class LoginData(BaseModel):
     username: str
     password: str
@@ -41,8 +33,7 @@ class ProgressData(BaseModel):
     user_id: int
     progress: int
 
-# ================== ROUTES ==================
-
+# ----------------- ROUTES -----------------
 @app.get("/")
 def root():
     return {"status": "server running"}
@@ -64,14 +55,20 @@ def login(data: LoginData):
     if user.get("banned"):
         raise HTTPException(status_code=403, detail="User banned")
 
-    if user.get("expiry"):
-        if date.fromisoformat(user["expiry"]) < date.today():
-            raise HTTPException(status_code=403, detail="Account expired")
+    if user.get("expiry") and date.fromisoformat(user["expiry"]) < date.today():
+        raise HTTPException(status_code=403, detail="Account expired")
+
+    # Get user's row in Google Sheet
+    try:
+        cell = sheet.find(str(user["id"]))
+        row_index = cell.row
+    except:
+        row_index = None
 
     return {
         "status": "success",
         "user_id": user["id"],
-        "sheet_id": user.get("sheet_id"),
+        "sheet_row": row_index,
         "progress": user.get("progress", 0)
     }
 
@@ -84,6 +81,14 @@ def save_progress(data: ProgressData):
     if r.status_code not in (200, 204):
         raise HTTPException(status_code=400, detail="Progress not saved")
 
+    # Update Google Sheet progress
+    if sheet:
+        try:
+            cell = sheet.find(str(data.user_id))
+            sheet.update_cell(cell.row, 4, data.progress)  # 4th column = progress
+        except:
+            pass
+
     return {"status": "saved"}
 
 @app.get("/get_progress")
@@ -95,21 +100,3 @@ def get_progress(user_id: int):
         raise HTTPException(status_code=404, detail="User not found")
 
     return {"progress": r.json()[0].get("progress", 0)}
-
-# ================== GOOGLE SHEET DIALER ==================
-
-@app.get("/next_number")
-def next_number(row: int):
-    try:
-        number = sheet.cell(row, 1).value
-        return {"number": number}
-    except:
-        raise HTTPException(status_code=404, detail="Row not found")
-
-@app.post("/mark_called")
-def mark_called(row: int):
-    try:
-        sheet.update_cell(row, 2, "CALLED")
-        return {"status": "updated"}
-    except:
-        raise HTTPException(status_code=400, detail="Sheet update failed")
